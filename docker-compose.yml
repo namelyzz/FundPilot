@@ -1,0 +1,27 @@
+# FundPilot 本地依赖编排（V0.1）
+# 仅一个 PG + TimescaleDB 实例；REQ-00 §5 明确禁止 Redis / MQ。
+# DSN 与 config.example.yaml 保持同步。
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: fundpilot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fundpilot
+      POSTGRES_PASSWORD: fundpilot
+      POSTGRES_DB: fundpilot
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - fundpilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fundpilot -d fundpilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  fundpilot_pgdata:
+    name: fundpilot_pgdata

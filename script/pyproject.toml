@@ -1,0 +1,35 @@
+[project]
+name = "fundpilot-script"
+version = "0.1.0"
+description = "FundPilot 的 Python 辅助工程：数据探测脚本（V0.1）+ OCR sidecar（V0.2）"
+requires-python = ">=3.11"
+dependencies = [
+    "akshare>=1.13",          # A 股交易日历 / 行情兜底（REQ-01 FR-PL-07、REQ-04）
+    "pandas>=2.1",            # AkShare 返回值都是 DataFrame
+    "httpx>=0.27",             # 通用 HTTP 客户端（探测期使用）
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4",
+]
+
+# V0.2 启用：OCR sidecar
+ocr = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "paddleocr>=2.7",
+    "pillow>=10.2",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data_probe*", "ocr_sidecar*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

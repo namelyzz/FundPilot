@@ -1,2 +1,34 @@
-.log
-.idea
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+.claude
+
+# 日志
+*.log
+
+# 配置（仅 example 入库）
+config.yaml
+
+# Go
+backend/bin/
+*.exe
+*.test
+*.out
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volume 备份（如手动 dump）
+*.dump
+
+# 个人文档
+docs
