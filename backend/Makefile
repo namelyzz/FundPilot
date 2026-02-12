@@ -33,13 +33,14 @@ vet: ## go vet
 tidy: ## 整理依赖
 	$(GO) mod tidy
 
-migrate: ## 应用所有迁移（REQ-01 B2 启用 goose）
-	@echo "TODO[REQ-01 B2]: integrate goose; will run: goose -dir $(MIGRATIONS) postgres \"$(DB_DSN)\" up"
-	@exit 1
+migrate: ## 应用所有待执行迁移
+	FUNDPILOT_DATABASE_DSN="$(DB_DSN)" $(GO) run ./cmd/migrate up -dir $(MIGRATIONS)
 
-migrate-down: ## 回滚一步迁移（REQ-01 B2 启用 goose）
-	@echo "TODO[REQ-01 B2]: integrate goose; will run: goose -dir $(MIGRATIONS) postgres \"$(DB_DSN)\" down"
-	@exit 1
+migrate-down: ## 回滚一步迁移
+	FUNDPILOT_DATABASE_DSN="$(DB_DSN)" $(GO) run ./cmd/migrate down -dir $(MIGRATIONS)
+
+migrate-status: ## 查看迁移状态
+	FUNDPILOT_DATABASE_DSN="$(DB_DSN)" $(GO) run ./cmd/migrate status -dir $(MIGRATIONS)
 
 openapi: ## 生成 OpenAPI 契约（REQ-06 实现）
 	@echo "TODO[REQ-06]: emit api/openapi.yaml"
