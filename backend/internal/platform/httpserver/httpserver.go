@@ -1,4 +1,4 @@
-// Package httpserver 装配 chi 路由、跨切中间件与 HTTP 服务器生命周期。
+// Package httpserver 装配 gin 路由、跨切中间件与 HTTP 服务器生命周期。
 //
 // 中间件链（外到内）：
 //  1. RequestID    — 生成或透传 X-Request-Id
@@ -18,7 +18,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	apperrors "github.com/namelyzz/FundPilot/internal/platform/errors"
@@ -32,13 +32,16 @@ const (
 // HealthChecker 由调用方注入，避免 httpserver 依赖具体的 db / scheduler 实现。
 type HealthChecker func(ctx context.Context) HealthReport
 
-// HealthReport 对齐 FR-PL-10 的响应字段。
+// HealthReport 对齐 FR-PL-10 的响应字段。Jobs 用 any 承载领域结构（如
+// scheduler.JobStatus 列表），避免本包反向依赖业务包。
 type HealthReport struct {
 	Status              string `json:"status"`
 	DB                  string `json:"db"`
 	Scheduler           string `json:"scheduler"`
 	CalendarLastRefresh string `json:"calendar_last_refresh,omitempty"`
+	CalendarCoverage    string `json:"calendar_coverage,omitempty"`
 	Version             string `json:"version"`
+	Jobs                any    `json:"jobs,omitempty"`
 }
 
 // Options 描述构造一个 server 所需的依赖。
@@ -52,14 +55,17 @@ type Options struct {
 
 // New 构造可启动的 http.Server，路由与中间件已挂好。
 func New(opts Options) *http.Server {
-	r := chi.NewRouter()
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
 
-	r.Use(requestIDMiddleware)
-	r.Use(traceLoggerMiddleware(opts.Logger))
-	r.Use(accessLogMiddleware)
-	r.Use(recoverMiddleware)
+	r.Use(
+		requestIDMiddleware(),
+		traceLoggerMiddleware(opts.Logger),
+		accessLogMiddleware(),
+		recoverMiddleware(),
+	)
 
-	r.Get("/health", healthHandler(opts.HealthCheck))
+	r.GET("/health", healthHandler(opts.HealthCheck))
 
 	return &http.Server{
 		Addr:         opts.Addr,
@@ -71,81 +77,69 @@ func New(opts Options) *http.Server {
 
 // ---- middleware ----
 
-func requestIDMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(headerRequestID)
+func requestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.GetHeader(headerRequestID)
 		if id == "" {
 			id = uuid.NewString()
 		}
-		w.Header().Set(headerRequestID, id)
-		// 把 id 暂存到 header 上下游可读；下一层中间件会消费它
-		r.Header.Set(headerRequestID, id)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func traceLoggerMiddleware(base *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get(headerRequestID)
-			ctx := logger.WithTraceID(r.Context(), base, id)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+		c.Header(headerRequestID, id)
+		// 把 id 暂存到 header 供下游中间件读取
+		c.Request.Header.Set(headerRequestID, id)
+		c.Next()
 	}
 }
 
-// statusWriter 捕获最终写出的 HTTP 状态供 accessLog 使用。
-type statusWriter struct {
-	http.ResponseWriter
-	status int
+func traceLoggerMiddleware(base *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.GetHeader(headerRequestID)
+		ctx := logger.WithTraceID(c.Request.Context(), base, id)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
 }
 
-func (sw *statusWriter) WriteHeader(code int) {
-	sw.status = code
-	sw.ResponseWriter.WriteHeader(code)
-}
-
-func accessLogMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func accessLogMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
-		logger.FromContext(r.Context()).Info("http",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", sw.status,
+		c.Next()
+		logger.FromContext(c.Request.Context()).Info("http",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
-	})
+	}
 }
 
-func recoverMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func recoverMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
 		defer func() {
 			if rv := recover(); rv != nil {
-				logger.FromContext(r.Context()).Error("panic in handler",
+				logger.FromContext(c.Request.Context()).Error("panic in handler",
 					"value", fmt.Sprint(rv),
 					"stack", string(debug.Stack()),
 				)
 				cause := fmt.Errorf("panic: %v", rv)
-				apperrors.WriteError(w, r, apperrors.ErrInternal(cause))
+				apperrors.WriteError(c.Writer, c.Request, apperrors.ErrInternal(cause))
+				c.Abort()
 			}
 		}()
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
 // ---- handlers ----
 
-func healthHandler(check HealthChecker) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func healthHandler(check HealthChecker) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		var report HealthReport
 		if check != nil {
-			report = check(r.Context())
+			report = check(c.Request.Context())
 		} else {
 			report = HealthReport{Status: "ok", DB: "skipped", Scheduler: "skipped", Version: "unknown"}
 		}
-		apperrors.WriteOK(w, r, report)
+		apperrors.WriteOK(c.Writer, c.Request, report)
 	}
 }
 

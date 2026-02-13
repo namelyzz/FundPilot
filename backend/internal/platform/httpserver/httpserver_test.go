@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/namelyzz/FundPilot/internal/platform/config"
 	"github.com/namelyzz/FundPilot/internal/platform/logger"
 )
@@ -80,9 +82,7 @@ func TestRecover_PanicBecomesInternalError(t *testing.T) {
 	lg := logger.New(config.Logger{Level: "error", Format: "json"}, buf)
 	srv := New(Options{Logger: lg})
 	// 注入一个会 panic 的路由
-	srv.Handler.(interface {
-		Get(string, http.HandlerFunc)
-	}).Get("/boom", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handler.(*gin.Engine).GET("/boom", func(c *gin.Context) {
 		panic("nope")
 	})
 

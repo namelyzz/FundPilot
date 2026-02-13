@@ -1,4 +1,4 @@
-"""探测 AkShare 交易日历接口（A 股）。
+"""探测 AkShare 交易日历接口（A 股），并能输出落库就绪的 CSV。
 
 目的
     回答：``tool_trade_date_hist_sina`` 是否能稳定提供 FR-PL-07 所需的
@@ -9,22 +9,31 @@
     （新浪历史交易日列表，免登录、无频控压力）
 
 被谁消费
-    REQ-01 FR-PL-07：交易日历表 ``trade_calendar`` 的主数据来源
-    （fallback 是仓库内手工导入的 csv）
+    REQ-01 FR-PL-07：交易日历表 ``trade_calendar`` 的主数据来源。
+    Go 端 ``cmd/calendar-seed`` 消费本脚本的 ``--csv`` 输出。
 
 用法
-    python -m data_probe.probe_trade_calendar              # 完整探测
-    python -m data_probe.probe_trade_calendar --year 2026  # 仅看指定年份
-    python -m data_probe.probe_trade_calendar --json       # 机器可读输出
+    python -m data_probe.probe_trade_calendar                       # 探测概览
+    python -m data_probe.probe_trade_calendar --year 2026           # 指定年份
+    python -m data_probe.probe_trade_calendar --json                # 机器可读概览
+    python -m data_probe.probe_trade_calendar --csv > cal.csv       # 全量 CSV
+    python -m data_probe.probe_trade_calendar --csv --from 2026-01-01 --to 2026-12-31
+
+CSV 列：``trade_date,is_open,prev_trade_date``
+    - trade_date 用 YYYY-MM-DD
+    - is_open 用 true/false（cmd/calendar-seed 期望该格式）
+    - prev_trade_date 在第一行可为空
+    AkShare 仅给出"开市日"，本脚本会逐日补齐 ``is_open=false`` 的休市日。
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 
 @dataclass
@@ -51,8 +60,6 @@ def _load_calendar():
         raise SystemExit(2) from exc
 
     df = ak.tool_trade_date_hist_sina()
-    # AkShare 历史上字段名变过：trade_date / trade_date_sina / date 都见过
-    # 这里探测式地找日期列，避免脚本随上游小变动炸掉
     candidate_cols = [c for c in df.columns if "date" in c.lower()]
     if not candidate_cols:
         raise RuntimeError(
@@ -61,6 +68,10 @@ def _load_calendar():
     date_col = candidate_cols[0]
     df[date_col] = df[date_col].astype(str)
     return df, date_col
+
+
+def _parse_iso(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m-%d").date()
 
 
 def build_report(year: int | None) -> ProbeReport:
@@ -97,11 +108,68 @@ def build_report(year: int | None) -> ProbeReport:
     )
 
 
+def emit_csv(
+    *,
+    out,
+    date_from: date | None,
+    date_to: date | None,
+) -> int:
+    """把 AkShare 的开市日 + 自动补齐的休市日写到 out，按日期升序。返回行数。"""
+    df, date_col = _load_calendar()
+    open_dates = sorted({_parse_iso(s) for s in df[date_col].tolist()})
+
+    if not open_dates:
+        sys.stderr.write("[probe_trade_calendar] 上游没有返回任何开市日\n")
+        return 0
+
+    # 范围裁剪
+    if date_from is None:
+        date_from = open_dates[0]
+    if date_to is None:
+        date_to = open_dates[-1]
+    if date_from > date_to:
+        raise SystemExit(f"--from {date_from} 大于 --to {date_to}")
+
+    open_set = set(open_dates)
+
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["trade_date", "is_open", "prev_trade_date"])
+
+    prev_open: date | None = None
+    count = 0
+    d = date_from
+    one_day = timedelta(days=1)
+    while d <= date_to:
+        is_open = d in open_set
+        writer.writerow(
+            [
+                d.isoformat(),
+                "true" if is_open else "false",
+                prev_open.isoformat() if prev_open is not None else "",
+            ]
+        )
+        if is_open:
+            prev_open = d
+        d += one_day
+        count += 1
+    return count
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--year", type=int, default=date.today().year, help="抽样统计的年份（默认当前年）")
-    parser.add_argument("--json", action="store_true", help="以 JSON 输出（便于落档）")
+    parser.add_argument("--json", action="store_true", help="探测概览以 JSON 输出")
+    parser.add_argument("--csv", action="store_true", help="输出 trade_calendar 落库就绪的 CSV")
+    parser.add_argument("--from", dest="date_from", type=_parse_iso, default=None, help="CSV 起始日期 YYYY-MM-DD（默认上游最早）")
+    parser.add_argument("--to", dest="date_to", type=_parse_iso, default=None, help="CSV 终止日期 YYYY-MM-DD（默认上游最晚）")
     args = parser.parse_args(argv)
+
+    if args.csv:
+        rows = emit_csv(out=sys.stdout, date_from=args.date_from, date_to=args.date_to)
+        sys.stderr.write(f"[probe_trade_calendar] {rows} 行 CSV 已输出\n")
+        return 0
 
     report = build_report(args.year)
 

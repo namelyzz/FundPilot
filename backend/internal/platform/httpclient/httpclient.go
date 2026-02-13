@@ -36,7 +36,8 @@ import (
 // UserAgent 是品牌字符串，所有出站请求都会带上（FR-PL-05）。
 const UserAgent = "FundPilot/0.1 (+local)"
 
-// Policy 控制每个 source 的稳定性策略。零值不可用，请用 [DefaultPolicy]。
+// Policy 所有出站请求的身份标识。
+// 控制每个 source 的稳定性策略。零值不可用，请用 [DefaultPolicy]。
 type Policy struct {
 	Timeout     time.Duration // 单次请求超时（不含重试）
 	Retries     int           // 失败重试次数；0 表示不重试，仅尝试一次
@@ -48,6 +49,7 @@ type Policy struct {
 }
 
 // DefaultPolicy 返回 FR-PL-05 基线策略。
+// 默认值：超时 5s、重试 2 次、退避 200ms、5 QPS、桶容量 5、连续 5 次失败熔断 60s
 func DefaultPolicy() Policy {
 	return Policy{
 		Timeout:     5 * time.Second,
@@ -105,7 +107,9 @@ func (c *Client) policyFor(source string) Policy {
 	return c.defaults
 }
 
+// 懒初始化
 func (c *Client) stateFor(source string) *sourceState {
+	// 加锁检查：已存在就返回, 不存在就创建
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	if st, ok := c.state[source]; ok {
@@ -113,6 +117,7 @@ func (c *Client) stateFor(source string) *sourceState {
 	}
 	p := c.policyFor(source)
 
+	// 1. 限流器
 	var lim *rate.Limiter
 	if p.RPS > 0 {
 		burst := p.Burst
@@ -126,6 +131,7 @@ func (c *Client) stateFor(source string) *sourceState {
 		lim = rate.NewLimiter(rate.Limit(p.RPS), burst)
 	}
 
+	// 2. 熔断器
 	var br *gobreaker.CircuitBreaker
 	if p.BreakerN > 0 {
 		br = gobreaker.NewCircuitBreaker(gobreaker.Settings{
@@ -145,7 +151,8 @@ func (c *Client) stateFor(source string) *sourceState {
 // ErrCircuitOpen 由 [Client.Do] 在熔断器打开时返回（包装 gobreaker.ErrOpenState）。
 var ErrCircuitOpen = errors.New("httpclient: circuit open")
 
-// Do 发起一次请求，自动应用 source 的 timeout/retry/rate-limit/circuit-breaker。
+// Do 主入口，发起一次请求
+// 自动应用 source 的 timeout/retry/rate-limit/circuit-breaker。
 //
 // 重试规则：
 //   - 4xx：直接返回响应给调用方，不重试（多数 4xx 重试无意义）
@@ -153,19 +160,22 @@ var ErrCircuitOpen = errors.New("httpclient: circuit open")
 //
 // 限流只对"首次尝试"扣 token；重试不扣，避免限流惩罚已经失败的请求。
 func (c *Client) Do(ctx context.Context, source string, req *http.Request) (*http.Response, error) {
+	// 第一步：source 校验
 	if source == "" {
 		return nil, errors.New("httpclient: empty source")
 	}
 	st := c.stateFor(source)
 
-	// 限流（首次尝试）：受 ctx 取消影响
+	// 第二步：限流（首次尝试）：受 ctx 取消影响
+	// Wait(ctx) 会阻塞到有令牌为止。如果 ctx 被取消（比如请求超时），直接返回错误，不会无限等下去。
+	// 限流只在首次尝试时扣令牌，重试不扣
 	if st.limiter != nil {
 		if err := st.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("httpclient: rate limit wait: %w", err)
 		}
 	}
 
-	// 注入 UA（不覆盖调用方已设置的值，便于测试场景定制）
+	// 第三步：注入 User-Agent（不覆盖调用方已设置的值，便于测试场景定制）
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", UserAgent)
 	}
@@ -178,6 +188,7 @@ func (c *Client) Do(ctx context.Context, source string, req *http.Request) (*htt
 		return attempt()
 	}
 
+	// 第四步：进入熔断器
 	res, err := st.breaker.Execute(func() (interface{}, error) {
 		resp, err := attempt()
 		if err != nil {
@@ -248,10 +259,14 @@ func (c *Client) doOnceWithRetry(ctx context.Context, source string, req *http.R
 	return nil, lastErr
 }
 
+// drainAndClose 为什么要 drain？
+// HTTP 连接是复用的（连接池）。
+// 如果你只读了一半 body 就 Close()，Go 的连接池不知道 body 剩了多少
+// 会直接断开这个连接而不是放回池里。
 func drainAndClose(resp *http.Response) error {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body) // 把剩余数据读完再关，连接才能被复用。
 	return resp.Body.Close()
 }
