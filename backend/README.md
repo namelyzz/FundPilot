@@ -86,13 +86,18 @@ curl -s http://localhost:8080/health | jq .
 ## 测试
 
 ```bash
-make test            # 全部单测
+make test            # 全部单测；Makefile 会 -include .env 注入 FUNDPILOT_TEST_DSN
 go test ./internal/platform/scheduler/... -v -run TestRunner  # 单包单用例
 go test ./... -count=1                                        # 关 cache
 go test ./... -race                                           # race detector
 ```
 
-V0.1-B4 累计 66 单测，全部不依赖真实数据库（db 包只覆盖错误路径；calendar 测试用 `LoadSnapshot` 注入内存数据）。需要真 DB 的集成测试目前没有，REQ-02 起再决定接入方式（直接连本地 PG 或用 testcontainers / dockertest 之类）。
+V0.1-B4 累计 66 单测，全部不依赖真实数据库。REQ-02 B.4 起 asset repo 引入集成测试：
+
+- 通过环境变量 `FUNDPILOT_TEST_DSN` 启用；未设时所有 asset 集成用例 `t.Skip`，平台层测试不受影响
+- 推荐做法：复制 `.env.example` 为 `.env`，按本地 PG 凭据修改；`make test` 会自动注入
+- 直接 `go test ./internal/asset/...` 需要手动 `export FUNDPILOT_TEST_DSN=...`
+- ⚠️ 集成测试会 `TRUNCATE positions, position_valuations RESTART IDENTITY`，**不要指向生产库**
 
 ## REQ-02 起写代码的必读约定
 

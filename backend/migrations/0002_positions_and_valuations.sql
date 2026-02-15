@@ -21,6 +21,7 @@ CREATE TABLE positions (
     holding_start_date  DATE         NOT NULL DEFAULT CURRENT_DATE,
     source              VARCHAR(16)  NOT NULL DEFAULT 'manual'
                                      CHECK (source IN ('manual', 'ocr')),
+    version             INT          NOT NULL DEFAULT 0,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -33,6 +34,7 @@ COMMENT ON COLUMN positions.cost_basis        IS '反推：holding_amount − ho
 COMMENT ON COLUMN positions.estimated_shares  IS '反推：holding_amount / 最新 T-1 净值；净值不可用时为 NULL';
 COMMENT ON COLUMN positions.holding_days      IS '持有天数；查询时取 max(stored, today − holding_start_date)（REQ-02 §4 FR-AS-04）';
 COMMENT ON COLUMN positions.source            IS '录入来源：manual（REQ-02）/ ocr（V0.2）';
+COMMENT ON COLUMN positions.version           IS '乐观锁版本号；每次 UPDATE 在 WHERE 中校验并自增。冲突映射为 ErrPositionVersionConflict / HTTP 409，避免并发 PATCH 互相覆盖派生字段';
 COMMENT ON COLUMN positions.updated_at        IS '应用层显式写入，不使用触发器';
 
 -- ----------------------------------------------------------------------------
