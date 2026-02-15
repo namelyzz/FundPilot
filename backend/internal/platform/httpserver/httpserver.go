@@ -55,7 +55,12 @@ type Options struct {
 
 // New 构造可启动的 http.Server，路由与中间件已挂好。
 func New(opts Options) *http.Server {
+	// 禁用 Gin 的调试输出（控制台彩色日志）
 	gin.SetMode(gin.ReleaseMode)
+	// 为什么用 gin.New() 而不是 gin.Default()？
+	// gin.Default() 自带 Logger 和 Recovery 中间件，
+	// 但我们自己实现了更精细的版本（带 trace_id、用 slog 输出、返回统一错误格式），
+	// 所以用 gin.New() 从零挂载。
 	r := gin.New()
 
 	r.Use(
@@ -77,6 +82,13 @@ func New(opts Options) *http.Server {
 
 // ---- middleware ----
 
+// requestIDMiddleware 执行流程
+// 请求进来（无 X-Request-Id）
+//   → 生成 UUID: "abc-123"
+//   → 响应头写入 X-Request-Id: abc-123
+//   → 请求头也写入 X-Request-Id: abc-123
+//   → c.Next() 进入下一个中间件
+
 func requestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader(headerRequestID)
@@ -94,15 +106,18 @@ func traceLoggerMiddleware(base *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader(headerRequestID)
 		ctx := logger.WithTraceID(c.Request.Context(), base, id)
+		// Go 的 context 是不可变的, 需要把上面的 ctx 挂回 c.Request
+		// 如果不写这行，后续的日志里就没有 trace_id 了
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }
 
+// accessLogMiddleware  记录每个 HTTP 请求的访问日志——方法、路径、状态码、耗时。
 func accessLogMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		c.Next()
+		c.Next() // 先执行后续 handler
 		logger.FromContext(c.Request.Context()).Info("http",
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
@@ -122,7 +137,7 @@ func recoverMiddleware() gin.HandlerFunc {
 				)
 				cause := fmt.Errorf("panic: %v", rv)
 				apperrors.WriteError(c.Writer, c.Request, apperrors.ErrInternal(cause))
-				c.Abort()
+				c.Abort() // 出错了，阻止后续 handler 执行，直接终止链
 			}
 		}()
 		c.Next()

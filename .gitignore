@@ -7,8 +7,20 @@
 # 日志
 *.log
 
-# 配置（仅 example 入库）
+# ── 敏感文件（绝不入库） ──────────────────────────
+# 真实配置（含数据库密码、API 密钥等）
 config.yaml
+# 环境变量文件
+.env
+.env.*
+!.env.example
+# 密钥 / 证书
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
 
 # Go
 backend/bin/
@@ -27,8 +39,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Docker volume 备份（如手动 dump）
+# 数据库 dump
 *.dump
+*.sql.bak
 
 # 个人文档
 docs

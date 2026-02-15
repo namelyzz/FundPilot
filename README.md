@@ -18,7 +18,6 @@ fundpilot/
 ├── frontend/       # V0.2 React 应用（V0.1 仅占位）
 ├── script/         # Python 工具：data_probe（V0.1）+ ocr_sidecar（V0.2）
 ├── docs/           # 项目计划书 / 版本计划 / 调查结果
-├── docker-compose.yml   # PG + TimescaleDB
 ├── config.example.yaml  # 复制为 config.yaml 后修改
 ├── Makefile
 └── README.md
@@ -26,14 +25,13 @@ fundpilot/
 
 ## 快速开始（B1 阶段）
 
+> 前置依赖：本机已安装 PostgreSQL 15 + TimescaleDB 2.x，DSN 与 `config.example.yaml` 中的默认值一致（或通过 `FUNDPILOT_DATABASE_DSN` 覆盖）。
+
 ```bash
 # 1. 复制配置
 cp config.example.yaml config.yaml
 
-# 2. 起本地依赖（需要 Docker）
-make up                      # 或：docker compose up -d
-
-# 3. 跑空壳服务（B1 阶段仅打印启动日志并阻塞）
+# 2. 跑空壳服务（B1 阶段仅打印启动日志并阻塞）
 make backend run             # 或：cd backend && go run ./cmd/fundpilot
 ```
 

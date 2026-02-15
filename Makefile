@@ -3,16 +3,10 @@
 
 SHELL := /bin/bash
 
-.PHONY: help up down backend frontend lint
+.PHONY: help backend frontend lint
 
 help: ## 列出可用目标
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
-
-up: ## 启动本地 PG + TimescaleDB（docker compose up -d）
-	docker compose up -d
-
-down: ## 关闭本地依赖
-	docker compose down
 
 backend: ## 进入 backend/ 执行默认目标
 	$(MAKE) -C backend

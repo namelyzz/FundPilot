@@ -9,7 +9,12 @@ BIN_NAME      := fundpilot
 MAIN_PKG      := ./cmd/fundpilot
 MIGRATIONS    := ./migrations
 
-# 数据库 DSN：优先读环境变量，否则用本地 docker compose 默认值
+# 尝试引入本地的 .env 文件
+#（前面的减号 - 表示如果找不到该文件，也不报错。我在目录下放了 .env.example ，改为 .env 并填入自己的账号密码等信息作为环境变量）
+-include .env
+export
+
+# 数据库 DSN：优先读环境变量，否则用本地默认值
 DB_DSN ?= postgres://fundpilot:fundpilot@localhost:5432/fundpilot?sslmode=disable
 
 .PHONY: help build run test vet tidy migrate migrate-down openapi
