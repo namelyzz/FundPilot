@@ -38,16 +38,16 @@ type FundLookup interface {
 type FundMeta struct {
 	Code string // 基金代码（对齐 positions.fund_code）
 	Name string // 基金全称
-	Type string // 'index' | 'etf_link' | 'stock' | 'bond' | 'mixed' | 'qdii' | 'other'
+	Type string // 基金类型：index | etf_link | stock | bond | mixed | qdii | other
 }
 
 // NAV 是基金的 T-1 净值快照。FetchedAt 用于诊断"净值多久没刷新过"；
 // 业务计算（estimated_shares）只用 Value。
 type NAV struct {
-	FundCode  string
-	Value     decimal.Decimal
-	NAVDate   time.Time // T-1 净值对应的交易日（DATE 列，时分秒可忽略）
-	FetchedAt time.Time // 上游最近一次同步成功的时间
+	FundCode  string          // 基金代码
+	Value     decimal.Decimal // T-1 单位净值
+	NAVDate   time.Time       // T-1 净值对应的交易日（DATE 列，时分秒可忽略）
+	FetchedAt time.Time       // 上游最近一次同步成功的时间
 }
 
 // ---- Valuation 域接口 ----------------------------------------------------
@@ -74,24 +74,24 @@ type ValuationLookup interface {
 // Confidence 用 string 而非自定义类型——枚举所有权属于 valuation 域，
 // asset 仅消费透传，避免跨包枚举漂移。
 type PositionValuation struct {
-	PositionID     int64
-	AsOf           time.Time
-	EstNAV         decimal.NullDecimal
-	EstChangePct   decimal.NullDecimal
-	EstMarketValue decimal.NullDecimal
-	TodayPnL       decimal.NullDecimal
-	Confidence     string              // 'high' | 'mid' | 'low' | 'unsupported'
-	CoverageRatio  decimal.NullDecimal // 0.0000–1.0000
-	FallbackReason string              // 空串 = 走的主路径
+	PositionID     int64               // 持仓 ID，逻辑外键 → positions.id
+	AsOf           time.Time           // 估值时间点（hypertable 分区键）
+	EstNAV         decimal.NullDecimal // 估算净值，缺省时 Valid=false
+	EstChangePct   decimal.NullDecimal // 估算涨跌幅，缺省时 Valid=false
+	EstMarketValue decimal.NullDecimal // 估算市值，缺省时 Valid=false
+	TodayPnL       decimal.NullDecimal // 当日估算盈亏，缺省时 Valid=false
+	Confidence     string              // high | mid | low | unsupported
+	CoverageRatio  decimal.NullDecimal // 估值覆盖度 0.0000–1.0000
+	FallbackReason string              // 降级原因；空串 = 走主路径
 }
 
 // PortfolioSnapshot 是组合级估值快照（对齐表 portfolio_snapshots）。
 // ConfidenceSummary 用 map 表达 JSONB 字段的稳定结构（spec §3.3 / FR-AS-06）。
 type PortfolioSnapshot struct {
-	AsOf              time.Time
-	TotalAssets       decimal.Decimal
-	TodayPnL          decimal.Decimal
-	TodayReturnPct    decimal.Decimal
-	PositionCount     int
-	ConfidenceSummary map[string]int // {"high":N,"mid":N,"low":N,"unsupported":N}
+	AsOf              time.Time       // 快照时间点
+	TotalAssets       decimal.Decimal // 所有持仓 EstMarketValue 之和
+	TodayPnL          decimal.Decimal // 组合当日估算盈亏
+	TodayReturnPct    decimal.Decimal // 组合当日收益率
+	PositionCount     int             // 持仓数量
+	ConfidenceSummary map[string]int  // {"high":N,"mid":N,"low":N,"unsupported":N}
 }

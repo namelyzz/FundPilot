@@ -19,6 +19,23 @@ import (
 //     的"未找到"约定，由 REQ-03 / REQ-05 的实现侧 return，asset.Service 据此降级
 //     （详见 ports.go 内各接口方法注释）
 var (
+	// ErrInvalidInput 表示输入参数不符合业务规则（如 fund_code 非 6 位数字、
+	// holding_amount <= 0、空 PATCH、非法 rangeSpec 等）。
+	// 对应通用 INVALID_INPUT / HTTP 400。
+	ErrInvalidInput = apperrors.New(
+		"INVALID_INPUT",
+		http.StatusBadRequest,
+		"输入参数不符合业务规则",
+	)
+
+	// ErrInternalServer 是 service 层捕获未预期错误时的兜底包装。
+	// 对应 INTERNAL_SERVER_ERROR / HTTP 500；HTTP 层可直接序列化此 sentinel。
+	ErrInternalServer = apperrors.New(
+		"INTERNAL_SERVER_ERROR",
+		http.StatusInternalServerError,
+		"服务内部错误",
+	)
+
 	// ErrPositionDuplicate 在创建持仓时 fund_code 已存在；
 	// 对应 FR-AS-01 的 POSITION_DUPLICATE / HTTP 409（spec §8）。
 	ErrPositionDuplicate = apperrors.New(

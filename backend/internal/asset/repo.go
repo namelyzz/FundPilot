@@ -21,7 +21,18 @@ import (
 // 并发 / 一致性：单条 SQL 操作，本身原子；service 若需要"读 → 改 → 写"原子性
 // （Update 路径就是），应自行 BeginTx 或加乐观锁。V0.1 单用户，先不引入。
 type PositionRepo struct {
-	pool *pgxpool.Pool
+	pool *pgxpool.Pool // PostgreSQL 连接池，由装配层注入，不允许为 nil
+}
+
+// Repository 抽象 asset 域对 positions 表的存取能力，由 Service 依赖。
+// 该接口只暴露 REQ-02 当前需要的 CRUD / list 能力，不承载任何业务派生逻辑。
+type Repository interface {
+	Create(ctx context.Context, p *Position) (*Position, error)
+	GetByID(ctx context.Context, id int64) (*Position, error)
+	GetByFundCode(ctx context.Context, fundCode string) (*Position, error)
+	Update(ctx context.Context, p *Position) (*Position, error)
+	Delete(ctx context.Context, id int64) error
+	List(ctx context.Context) ([]Position, error)
 }
 
 // NewPositionRepo 构造仓储；pool 不允许为 nil（运行时缺少连接池属于装配错误，
@@ -99,6 +110,7 @@ func (r *PositionRepo) GetByFundCode(ctx context.Context, fundCode string) (*Pos
 // UPDATE 0 命中时需再 SELECT 一次 EXISTS 区分两种原因：
 //   - 行不存在            → ErrPositionNotFound
 //   - 行存在但 version 不一致 → ErrPositionVersionConflict
+//
 // 服务端不重试，直接把 conflict 抛到 service 由 HTTP 层返 409。
 func (r *PositionRepo) Update(ctx context.Context, p *Position) (*Position, error) {
 	const q = `
@@ -218,10 +230,10 @@ type rowScanner interface {
 // 因为 pgx/v5 没有为 shopspring/decimal 提供原生 codec。
 func scanPosition(s rowScanner) (*Position, error) {
 	var (
-		p                                                Position
-		holdingAmount, holdingProfit, costBasis, shares  pgtype.Numeric
-		holdingStartDate                                 time.Time
-		src                                              string
+		p                                               Position
+		holdingAmount, holdingProfit, costBasis, shares pgtype.Numeric
+		holdingStartDate                                time.Time
+		src                                             string
 	)
 
 	if err := s.Scan(

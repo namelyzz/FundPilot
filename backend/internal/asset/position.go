@@ -33,21 +33,21 @@ func (s Source) Valid() bool {
 // 中校验并自增，冲突映射为 ErrPositionVersionConflict（避免并发 PATCH 互相
 // 覆盖派生字段，详见 repo.Update 注释）。
 type Position struct {
-	ID               int64
-	FundCode         string
-	HoldingAmount    decimal.Decimal
-	HoldingProfit    decimal.Decimal
-	CostBasis        decimal.Decimal
-	EstimatedShares  decimal.NullDecimal
-	HoldingDays      int
-	HoldingStartDate time.Time
-	Source           Source
-	Version          int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               int64               // 主键，由 DB 生成（BIGSERIAL）
+	FundCode         string              // 基金代码，6 位数字，应用层校验 ^[0-9]{6}$，DB 层 UNIQUE
+	HoldingAmount    decimal.Decimal     // 当前市值（用户支付宝口径录入），DECIMAL(14,2)，必须 > 0
+	HoldingProfit    decimal.Decimal     // 累计盈亏，DECIMAL(14,2)，可为负
+	CostBasis        decimal.Decimal     // 投入本金 = HoldingAmount - HoldingProfit，由 service 反推填入
+	EstimatedShares  decimal.NullDecimal // 估算份额 = HoldingAmount / 最新 T-1 净值；净值不可用时 Valid=false（NULL）
+	HoldingDays      int                 // 持有天数，查询时取 max(stored, today - HoldingStartDate)
+	HoldingStartDate time.Time           // 持有起始日期，仅日期分量有意义（DB 列类型 DATE）
+	Source           Source              // 录入来源：manual / ocr
+	Version          int                 // 乐观锁版本号，UPDATE 时 WHERE 校验并自增，冲突 → ErrPositionVersionConflict
+	CreatedAt        time.Time           // 创建时间，由 DB 生成
+	UpdatedAt        time.Time           // 最后修改时间，由 DB 的 now() 生成
 }
 
-// PositionInput 是创建持仓的请求载荷，对应 FR-AS-01 的输入字段。
+// PositionInput 是创建持仓的请求载荷。
 //
 // 派生字段（cost_basis / estimated_shares）不在此结构内：由 service 在调用
 // repo.Create 前计算并填到 Position 上，保持 repo 无业务逻辑。
@@ -57,23 +57,23 @@ type Position struct {
 //   - HoldingStartDate 为 nil 时取当日；与 HoldingDays 同时提供时以本字段为准
 //   - Source 为空时取 DefaultSource（manual）
 type PositionInput struct {
-	FundCode         string
-	HoldingAmount    decimal.Decimal
-	HoldingProfit    decimal.Decimal
-	HoldingDays      *int
-	HoldingStartDate *time.Time
-	Source           Source
+	FundCode         string          // 基金代码，必须匹配 ^[0-9]{6}$
+	HoldingAmount    decimal.Decimal // 当前市值，必须 > 0
+	HoldingProfit    decimal.Decimal // 累计盈亏，可为负
+	HoldingDays      *int            // 持有天数，nil 时由 service 从 HoldingStartDate 推算；非 nil 时必须 >= 0
+	HoldingStartDate *time.Time      // 持有起始日期，nil 时取当日；与 HoldingDays 同时提供时以本字段为准
+	Source           Source          // 录入来源，空字符串时取 DefaultSource（manual）
 }
 
-// PositionPatch 是修改持仓的请求载荷，对应 FR-AS-02 的可改字段子集。
+// PositionPatch 是修改持仓的请求载荷。
 //
 // 字段均为指针：nil 表示"本次不修改"；非 nil 即使是零值也视为显式赋值。
 // fund_code、cost_basis、estimated_shares 不可由用户直接修改，故不出现在此。
 type PositionPatch struct {
-	HoldingAmount    *decimal.Decimal
-	HoldingProfit    *decimal.Decimal
-	HoldingDays      *int
-	HoldingStartDate *time.Time
+	HoldingAmount    *decimal.Decimal // 当前市值，nil 表示不修改；非 nil 时必须 > 0
+	HoldingProfit    *decimal.Decimal // 累计盈亏，nil 表示不修改
+	HoldingDays      *int             // 持有天数，nil 表示不修改；非 nil 时必须 >= 0
+	HoldingStartDate *time.Time       // 持有起始日期，nil 表示不修改
 }
 
 // IsEmpty 判断是否所有字段都未设置；service 用于拒绝"空 PATCH"。
